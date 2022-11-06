@@ -1,11 +1,13 @@
 ﻿using AutoMapper;
+using IdentityModel.Client;
 using IdentityService.Contract;
 using IdentityService.Entity.Models;
-using IdentityService.Helpers;
 using IdentityService.Repository;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using System;
+using System.Net.Http;
 using System.Threading.Tasks;
 
 namespace IdentityService.Controllers
@@ -14,13 +16,13 @@ namespace IdentityService.Controllers
     [Route("api/[controller]")]
     public class IdentityController : ControllerBase
     {
-        private readonly IConfiguration _config;
+        private readonly IConfiguration _configuration;
         private readonly IUserRepository _userRepository;
         private readonly IMapper _mapper;
 
-        public IdentityController(IConfiguration config, IUserRepository userRepository, IMapper mapper)
+        public IdentityController(IConfiguration configuration, IUserRepository userRepository, IMapper mapper)
         {
-            _config = config;
+            _configuration = configuration;
             _userRepository = userRepository;
             _mapper = mapper;
         }
@@ -33,9 +35,30 @@ namespace IdentityService.Controllers
 
             if (user != null)
             {
-                string token = AuthenticateHelper.GenerateToken(_config, user);
+                var client = new HttpClient();
+                var discoveryResponse = await client.GetDiscoveryDocumentAsync(_configuration.GetValue<string>("IdentityAddress"));
 
-                return Ok(token);
+                if (discoveryResponse.IsError)
+                    throw new Exception(discoveryResponse.Error);
+
+                var tokenResponse = await client.RequestClientCredentialsTokenAsync(new ClientCredentialsTokenRequest
+                {
+                    Address = discoveryResponse.TokenEndpoint,
+                    ClientId = "dev-user",
+                    ClientSecret = "secret",
+                    Scope = "read",
+                    Parameters = new Parameters()
+                    {
+                        { "GivenName", user.GivenName },
+                        { "Surname", user.Surname },
+                        { "Role", user.Role }
+                    }
+                });
+
+                if (tokenResponse.IsError)
+                    throw new Exception(tokenResponse.Error);
+
+                return Ok(tokenResponse.AccessToken);
             }
 
             return NotFound($"User named {userLogin.Username} not found.");
@@ -50,11 +73,10 @@ namespace IdentityService.Controllers
                 return Conflict($"User named {registrationInfo.Username} already exists.");
 
             var user = _mapper.Map<User>(registrationInfo);
-            user.Role = UserType.Customer.ToString();
 
             await _userRepository.CreateUser(user);
 
-            return Ok($"User {user.Username} created.");
+            return Ok($"User {user.Username} with role {user.Role} created.");
         }
     }
 }

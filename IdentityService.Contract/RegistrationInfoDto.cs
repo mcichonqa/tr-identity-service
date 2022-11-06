@@ -10,5 +10,6 @@ namespace IdentityService.Contract
         public string GivenName { get; set; }
         public string Gender { get; set; }
         public DateTime BirthDate { get; set; }
+        public string Role { get; set; }
     }
 }
